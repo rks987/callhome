@@ -34,7 +34,7 @@ static int toClient(void *cls, uint64_t pos, char *buf, int max) {
 	if( cd->sendCount++ == 0) {
 		if (max < strlen(startingMsg)+10) return 0;
 		sprintf(buf,startingMsg,cd->ch_id,cd->httpDomain);
-	} else if (cd->sendCount > 100) {
+	} else if (cd->sendCount > 1000) {
 		if (max < strlen(restartMsg)+10,cd->httpDomain) return 0;
 		sprintf(buf,restartMsg);
 	} else {
@@ -78,7 +78,33 @@ static int callHomeIn(void *cls, struct MHD_Connection *connection,
 		return MHD_YES;
 	}
 	*ptr = NULL; /* reset when done */
-	if (strcmp(&url[1],"fromserver")==0) {
+	if (strcmp(&url[1],"idcreate")==0) {
+		/* expect parameters id and extra */
+		struct cometData *cd;
+		id = atoll(MHD_lookup_connection_value (connection, MHD_GET_ARGUMENT_KIND, "id"));
+		pthread_mutex_lock(&cdlMutex);
+		for(cd = cdList; cd!=NULL; cd=cd->next_cd) {
+			if( id==cd->ch_id) {
+				break;
+			}
+		}
+		if( cd==NULL) {
+			cd = (struct cometData *)malloc(sizeof(struct cometData));
+			cd->next_cd = cdList;
+			cd->ch_id = id;
+			pthread_mutex_init(&cd->ch_mutex, NULL);
+			pthread_cond_init (&cd->ch_cond, NULL);
+			cdList = cd;
+			response = MHD_create_response_from_data(strlen("OK"),
+								(void *) "OK", MHD_NO, MHD_NO);
+			ret = MHD_queue_response(connection, MHD_HTTP_OK, response);
+		} else {
+			response = MHD_create_response_from_data(strlen("Failed"),
+								(void *) "Failed", MHD_NO, MHD_NO);
+			ret = MHD_queue_response(connection, MHD_HTTP_NOT_FOUND, response);
+		}
+		pthread_mutex_unlock(&cdlMutex);
+	} else if (strcmp(&url[1],"fromserver")==0) {
 		/* expect parameters id and extra */
 		struct cometData *cd;
 		id = atoll(MHD_lookup_connection_value (connection, MHD_GET_ARGUMENT_KIND, "id"));
@@ -103,33 +129,30 @@ static int callHomeIn(void *cls, struct MHD_Connection *connection,
 		struct cometData *cd;
 		id = atoll(MHD_lookup_connection_value (connection, MHD_GET_ARGUMENT_KIND, "id"));
 		httpDomain = MHD_lookup_connection_value (connection, MHD_GET_ARGUMENT_KIND, "httpDomain");
-		pthread_mutex_lock(&cdlMutex);
 		for(cd = cdList; cd!=NULL; cd=cd->next_cd) {
 			if( id==cd->ch_id) {
 				break;
 			}
 		}
 		if( cd==NULL) {
-			cd = (struct cometData *)malloc(sizeof(struct cometData));
-			cd->next_cd = cdList;
-			cd->ch_id = id;
-			pthread_mutex_init(&cd->ch_mutex, NULL);
-			pthread_cond_init (&cd->ch_cond, NULL);
-			cdList = cd;
-		} else if (strcmp(cd->httpDomain,httpDomain)!=0) { /* unlikely */
-			free(cd->httpDomain);
-			cd->httpDomain = NULL;
+			response = MHD_create_response_from_data(strlen("not found"),
+						(void *) "not found", MHD_NO, MHD_NO);
+			ret = MHD_queue_response(connection, MHD_HTTP_NOT_FOUND, response);
+		} else {
+			if (strcmp(cd->httpDomain,httpDomain)!=0) { /* unlikely */
+				free(cd->httpDomain);
+				cd->httpDomain = NULL;
+			}
+			if( cd->httpDomain == NULL) {
+				cd->httpDomain = (char *)malloc(strlen(httpDomain)+1);
+				strcpy(cd->httpDomain,httpDomain);
+			}
+			cd->sendCount = 0;
+			cd->extraData = 0;
+			response = MHD_create_response_from_callback (-1, 256, &toClient, (void *)cd, NULL);
+			ret = MHD_queue_response (connection, MHD_HTTP_OK, response);
 		}
-		if( cd->httpDomain == NULL) {
-			cd->httpDomain = (char *)malloc(strlen(httpDomain)+1);
-			strcpy(cd->httpDomain,httpDomain);
-		}
-		cd->sendCount = 0;
-		cd->extraData = 0;
-		pthread_mutex_unlock(&cdlMutex);
-		response = MHD_create_response_from_callback (-1, 256, &toClient, (void *)cd, NULL);
-		ret = MHD_queue_response (connection, MHD_HTTP_OK, response);
-	} else {
+	} else { /* not a known destination */
 		response = MHD_create_response_from_data(strlen("Eh?"),
 					(void *) "Eh?", MHD_NO, MHD_NO);
 		ret = MHD_queue_response(connection, MHD_HTTP_NOT_FOUND, response);
