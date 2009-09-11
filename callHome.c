@@ -139,7 +139,7 @@ static int callHomeIn(void *cls, struct MHD_Connection *connection,
 						(void *) "not found", MHD_NO, MHD_NO);
 			ret = MHD_queue_response(connection, MHD_HTTP_NOT_FOUND, response);
 		} else {
-			if (strcmp(cd->httpDomain,httpDomain)!=0) { /* unlikely */
+			if (cd->httpDomain!=NULL && strcmp(cd->httpDomain,httpDomain)!=0) { /* unlikely */
 				free(cd->httpDomain);
 				cd->httpDomain = NULL;
 			}
